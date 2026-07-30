@@ -50,6 +50,9 @@ final class AppState: ObservableObject {
     /// One process sampler shared by Dashboard, Optimization, and menu-bar detail
     /// panels so concurrent surfaces don't each spawn a 5s `ps` loop.
     let processMonitor = ProcessMonitor()
+    /// One system-metrics monitor for dashboard, menu bar, optimization, and
+    /// battery views so they don't each run independent 2s / 30s probe timers.
+    let systemMonitor = SystemMonitor()
     private let cleanupPerformanceStore = CleanupPerformanceStore.shared
     private var activeScanTask: Task<Void, Never>?
     private var activeScanID: UUID?

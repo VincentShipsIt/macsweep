@@ -4,8 +4,7 @@ import AppKit
 /// Optimization view with process list and memory management
 struct OptimizationView: View {
     @EnvironmentObject private var appState: AppState
-    // Uses AppState.processMonitor — single shared sampler app-wide.
-    @StateObject private var systemMonitor = SystemMonitor()
+    // Uses AppState process + system monitors — single shared samplers app-wide.
     @State private var selectedProcesses: Set<pid_t> = []
     @State private var showingQuitConfirmation = false
     @State private var isFreezingRAM = false
@@ -51,6 +50,7 @@ struct OptimizationView: View {
     }
 
     private var processMonitor: ProcessMonitor { appState.processMonitor }
+    private var systemMonitor: SystemMonitor { appState.systemMonitor }
 
     // MARK: - System Stats Row
 

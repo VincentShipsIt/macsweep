@@ -5,12 +5,13 @@ import AppKit
 struct DashboardView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @StateObject private var monitor = SystemMonitor()
     @State private var expandedWidget: WidgetType? = nil
     @State private var isCleanupReviewExpanded = false
     @State private var showFDABanner = true
     @State private var showingConfirmation = false
     @State private var recommendedItemsToClean: Set<CleanupItem.ID> = []
+
+    private var monitor: SystemMonitor { appState.systemMonitor }
 
     var body: some View {
         VStack(spacing: 0) {

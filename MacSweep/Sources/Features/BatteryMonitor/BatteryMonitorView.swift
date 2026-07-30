@@ -3,7 +3,7 @@ import SwiftUI
 /// Full-screen battery monitoring view with health, cycles, and maintenance shortcuts.
 struct BatteryMonitorView: View {
     @EnvironmentObject private var appState: AppState
-    @StateObject private var monitor = SystemMonitor()
+    private var monitor: SystemMonitor { appState.systemMonitor }
 
     var body: some View {
         FeaturePageShell(
