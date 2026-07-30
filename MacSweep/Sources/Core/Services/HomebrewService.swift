@@ -286,37 +286,13 @@ Only return the JSON array, no other text.
     }
 
     private func callClaude(prompt: String, apiKey: String) async throws -> [BrewUpdateInsight] {
-        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-
-        let body: [String: Any] = [
-            "model": "claude-sonnet-4-5",
-            "max_tokens": 4096,
-            "messages": [["role": "user", "content": prompt]]
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, _) = try await URLSession.shared.data(for: request)
-
-        struct ClaudeResponse: Decodable {
-            struct Content: Decodable { let text: String }
-            let content: [Content]
-        }
-
-        let response = try JSONDecoder().decode(ClaudeResponse.self, from: data)
-        let text = response.content.first?.text ?? "[]"
-
-        // Extract JSON array from response
-        let jsonText: String
-        if let start = text.firstIndex(of: "["), let end = text.lastIndex(of: "]") {
-            jsonText = String(text[start...end])
-        } else {
-            jsonText = text
-        }
-
+        let text = try await AnthropicMessagesClient.complete(
+            prompt: prompt,
+            apiKey: apiKey,
+            model: .sonnet,
+            maxTokens: 4096
+        )
+        let jsonText = AnthropicMessagesClient.extractJSONArray(from: text)
         guard let jsonData = jsonText.data(using: .utf8) else { return [] }
         return try JSONDecoder().decode([BrewUpdateInsight].self, from: jsonData)
     }

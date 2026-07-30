@@ -109,7 +109,8 @@ actor LoginItemEnumerator {
                         path: path,
                         kind: .appService,
                         bundleIdentifier: currentBundleID,
-                        enabled: true
+                        enabled: true,
+                        plistPath: nil
                     ))
                 }
                 currentName = nil
@@ -148,7 +149,8 @@ actor LoginItemEnumerator {
             path: program,
             kind: kind,
             bundleIdentifier: nil,
-            enabled: !disabled
+            enabled: !disabled,
+            plistPath: url.path
         )
     }
 }

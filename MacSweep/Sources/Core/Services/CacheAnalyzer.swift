@@ -405,34 +405,14 @@ struct CacheAnalyzer {
     /// Anthropic Messages API and parse the JSON array of suggested cache dirs.
     /// Returns `(findings, error?)` — errors are surfaced, never thrown.
     private func runAnthropicScan(apiKey: String, prompt: String) async -> (findings: [Finding], error: String?) {
-
-        guard let url = URL(string: "https://api.anthropic.com/v1/messages") else {
-            return ([], "AI scan failed: invalid endpoint URL.")
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 30
-
-        let body: [String: Any] = [
-            "model": "claude-haiku-4-5",
-            "max_tokens": 2048,
-            "messages": [["role": "user", "content": prompt]]
-        ]
-
-        guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else {
-            return ([], "AI scan failed: could not encode request body.")
-        }
-        request.httpBody = httpBody
-
         do {
-            let (data, _) = try await URLSession.shared.data(for: request)
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let content = (json["content"] as? [[String: Any]])?.first,
-                  let text = content["text"] as? String,
-                  let findings = Self.parseAIFindings(text, source: "AI Analysis") else {
+            let text = try await AnthropicMessagesClient.complete(
+                prompt: prompt,
+                apiKey: apiKey,
+                model: .haiku,
+                maxTokens: 2048
+            )
+            guard let findings = Self.parseAIFindings(text, source: "AI Analysis") else {
                 return ([], "AI scan returned an unparseable response.")
             }
             return (findings, nil)
@@ -442,7 +422,7 @@ struct CacheAnalyzer {
     }
 
     private static func parseAIFindings(_ text: String, source: String) -> [Finding]? {
-        let cleaned = stripMarkdownFence(text)
+        let cleaned = AnthropicMessagesClient.extractJSONArray(from: text)
         guard let arrayData = cleaned.data(using: .utf8),
               let items = try? JSONSerialization.jsonObject(with: arrayData) as? [[String: Any]] else {
             return nil
@@ -464,17 +444,6 @@ struct CacheAnalyzer {
                 reason: reason
             )
         }
-    }
-
-    private static func stripMarkdownFence(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("```") else { return trimmed }
-        var lines = trimmed.components(separatedBy: .newlines)
-        if !lines.isEmpty { lines.removeFirst() }
-        if lines.last?.trimmingCharacters(in: .whitespacesAndNewlines) == "```" {
-            lines.removeLast()
-        }
-        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Shell helper

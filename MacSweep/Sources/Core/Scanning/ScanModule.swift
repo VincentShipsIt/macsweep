@@ -184,15 +184,20 @@ enum DockerCleanupAction: String, CaseIterable, Hashable, Sendable {
 
     var displayName: String {
         switch self {
-        case .pruneBuildCache: return "Docker Build Cache"
-        case .pruneImages: return "Docker Images"
-        case .pruneContainers: return "Docker Containers"
-        case .pruneVolumes: return "Docker Volumes"
+        case .pruneBuildCache: return "All unused Docker build cache"
+        case .pruneImages: return "All dangling Docker images"
+        case .pruneContainers: return "All stopped Docker containers"
+        case .pruneVolumes: return "All unused Docker volumes"
         }
     }
 
     /// Fixed argv for the Docker CLI. There is no string-bearing enum case, so
     /// paths, labels, and scan output can never become command arguments.
+    ///
+    /// Containers and volumes use list-then-remove-by-id so the command stream
+    /// enumerates concrete Docker IDs rather than a host-wide opaque prune.
+    /// Build cache and dangling images still use Docker's native prune (no
+    /// stable per-layer ID listing for those).
     var arguments: [String] {
         switch self {
         case .pruneBuildCache: return ["builder", "prune", "-f"]
@@ -202,20 +207,45 @@ enum DockerCleanupAction: String, CaseIterable, Hashable, Sendable {
         }
     }
 
+    /// List command used to enumerate concrete targets before remove-by-id.
+    var listArguments: [String]? {
+        switch self {
+        case .pruneContainers: return ["container", "ls", "-aq", "-f", "status=exited"]
+        case .pruneVolumes: return ["volume", "ls", "-q", "-f", "dangling=true"]
+        case .pruneBuildCache, .pruneImages: return nil
+        }
+    }
+
+    func removeArguments(forIDs ids: [String]) -> [String]? {
+        guard !ids.isEmpty else { return nil }
+        switch self {
+        case .pruneContainers: return ["container", "rm"] + ids
+        case .pruneVolumes: return ["volume", "rm"] + ids
+        case .pruneBuildCache, .pruneImages: return nil
+        }
+    }
+
     var commandPreview: String {
-        (["docker"] + arguments).joined(separator: " ")
+        switch self {
+        case .pruneContainers:
+            return "docker container ls -aq -f status=exited && docker container rm <ids>"
+        case .pruneVolumes:
+            return "docker volume ls -q -f dangling=true && docker volume rm <names>"
+        case .pruneBuildCache, .pruneImages:
+            return (["docker"] + arguments).joined(separator: " ")
+        }
     }
 
     var impactDescription: String {
         switch self {
         case .pruneBuildCache:
-            return "Runs Docker's native prune command for unused build cache."
+            return "Permanently removes ALL unused Docker build cache on this host via Docker's native prune."
         case .pruneImages:
-            return "Runs Docker's native prune command for dangling images."
+            return "Permanently removes ALL dangling (untagged) Docker images on this host."
         case .pruneContainers:
-            return "Runs Docker's native prune command for stopped containers."
+            return "Permanently removes ALL stopped containers (enumerated by id, then docker container rm)."
         case .pruneVolumes:
-            return "Runs Docker's native prune command for unused volumes. Volume data is permanently removed."
+            return "Permanently removes ALL dangling/unused volumes (enumerated by name, then docker volume rm). Volume data cannot be recovered."
         }
     }
 

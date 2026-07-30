@@ -4,11 +4,12 @@ import AppKit
 /// Menu bar dropdown view with system stats and quick actions
 struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
-    @StateObject private var monitor = SystemMonitor()
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expandedWidget: WidgetType?
     @State private var menuWindow: NSWindow?
+    @State private var freeRAMError: String?
+    private var monitor: SystemMonitor { appState.systemMonitor }
     @AppStorage(CompanionToolbarPreferences.storageCardVisible) private var storageCardVisible = true
     @AppStorage(CompanionToolbarPreferences.memoryCardVisible) private var memoryCardVisible = true
     @AppStorage(CompanionToolbarPreferences.batteryCardVisible) private var batteryCardVisible = true
@@ -45,6 +46,13 @@ struct MenuBarView: View {
                 .padding(.vertical, 6)
 
             systemOverviewGrid
+
+            if let freeRAMError {
+                MacSweepErrorBanner(message: freeRAMError) {
+                    self.freeRAMError = nil
+                }
+                .padding(.top, 8)
+            }
 
             if showsQuickActions {
                 Divider()
@@ -237,7 +245,12 @@ struct MenuBarView: View {
                 actionLabel: "Free Up",
                 action: {
                     Task {
-                        try? await monitor.freeUpMemory()
+                        freeRAMError = nil
+                        do {
+                            _ = try await monitor.freeUpMemory()
+                        } catch {
+                            freeRAMError = error.localizedDescription
+                        }
                     }
                 },
                 onTap: { toggleWidget(.memory) }

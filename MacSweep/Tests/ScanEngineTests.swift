@@ -603,7 +603,7 @@ struct ScanEngineTests {
         let result = await engine.scanWithDiagnostics()
 
         #expect(result.items == [action])
-        #expect(result.items.first?.displayName == "Docker Images")
+        #expect(result.items.first?.displayName == "All dangling Docker images")
         #expect(result.items.first?.size == 4096)
         #expect(result.items.first?.path.isFileURL == false)
     }

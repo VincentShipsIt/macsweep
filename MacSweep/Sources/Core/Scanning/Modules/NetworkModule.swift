@@ -63,11 +63,6 @@ struct WiFiNetworkManager {
     static let listingTimeout: TimeInterval = 30
     static let removalTimeout: TimeInterval = 30
 
-    /// Get the WiFi interface to use
-    private static var wifiInterface: String {
-        WiFiInterfaceManager.primaryInterface()
-    }
-
     /// Get list of saved WiFi networks on the primary interface.
     /// Delegates to `savedNetworks(interface:)` so the bounded subprocess and
     /// parsing behavior have a single implementation. Callers that need the
@@ -76,7 +71,8 @@ struct WiFiNetworkManager {
     static func savedNetworks(
         currentSSID: String? = nil
     ) async -> [SavedWiFiNetwork] {
-        await savedNetworks(interface: wifiInterface, currentSSID: currentSSID)
+        let interface = await WiFiInterfaceManager.primaryInterface()
+        return await savedNetworks(interface: interface, currentSSID: currentSSID)
     }
 
     /// Get list of saved WiFi networks for a specific interface
@@ -157,7 +153,8 @@ struct WiFiNetworkManager {
 
     /// Remove a saved WiFi network
     static func removeNetwork(_ ssid: String) async throws {
-        try await removeNetwork(ssid, interface: wifiInterface)
+        let interface = await WiFiInterfaceManager.primaryInterface()
+        try await removeNetwork(ssid, interface: interface)
     }
 
     /// Remove a saved WiFi network from a specific interface
@@ -402,58 +399,68 @@ enum DNSError: LocalizedError {
 // MARK: - WiFi Interface Manager
 
 struct WiFiInterfaceManager {
-    /// Get all available WiFi interfaces
-    static func availableInterfaces() -> [String] {
-        var interfaces: [String] = []
+    static let listingTimeout: TimeInterval = 10
 
-        // Use networksetup to list hardware ports
-        let process = Process()
-        let pipe = Pipe()
-
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-        process.arguments = ["-listallhardwareports"]
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8) else { return ["en0"] }
-
-            // Parse output to find WiFi interfaces
-            let lines = output.split(separator: "\n")
-            var isWiFi = false
-
-            for line in lines {
-                let lineStr = String(line)
-                if lineStr.contains("Wi-Fi") || lineStr.contains("AirPort") {
-                    isWiFi = true
-                } else if isWiFi && lineStr.hasPrefix("Device:") {
-                    let device = lineStr.replacingOccurrences(of: "Device: ", with: "").trimmingCharacters(in: .whitespaces)
-                    interfaces.append(device)
-                    isWiFi = false
-                } else if lineStr.hasPrefix("Hardware Port:") {
-                    isWiFi = false
-                }
-            }
-        } catch {
-            // Default to en0 if detection fails
+    /// Get all available WiFi interfaces via bounded `networksetup` (no raw `Process()`).
+    static func availableInterfaces(
+        commandRunner: WiFiCommandRunner = { executable, arguments, timeout in
+            try await ProcessRunner.run(
+                executable: executable,
+                arguments: arguments,
+                timeout: timeout
+            )
+        }
+    ) async -> [String] {
+        guard let result = try? await commandRunner(
+            "/usr/sbin/networksetup",
+            ["-listallhardwareports"],
+            Self.listingTimeout
+        ), result.didSucceed, result.outputWasValidUTF8 else {
+            return ["en0"]
         }
 
+        let interfaces = parseWiFiInterfaces(from: result.output)
         return interfaces.isEmpty ? ["en0"] : interfaces
     }
 
-    /// Get the primary WiFi interface
-    static func primaryInterface() -> String {
-        // Try CoreWLAN first
-        if let interface = CWWiFiClient.shared().interface() {
-            return interface.interfaceName ?? "en0"
-        }
+    /// Pure parser for `networksetup -listallhardwareports` Wi-Fi device lines.
+    static func parseWiFiInterfaces(from output: String) -> [String] {
+        var interfaces: [String] = []
+        var isWiFi = false
 
-        // Fall back to first available
-        return availableInterfaces().first ?? "en0"
+        for line in output.split(separator: "\n") {
+            let lineStr = String(line)
+            if lineStr.contains("Wi-Fi") || lineStr.contains("AirPort") {
+                isWiFi = true
+            } else if isWiFi && lineStr.hasPrefix("Device:") {
+                let device = lineStr
+                    .replacingOccurrences(of: "Device: ", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                if !device.isEmpty {
+                    interfaces.append(device)
+                }
+                isWiFi = false
+            } else if lineStr.hasPrefix("Hardware Port:") {
+                isWiFi = false
+            }
+        }
+        return interfaces
+    }
+
+    /// Get the primary WiFi interface
+    static func primaryInterface(
+        commandRunner: WiFiCommandRunner = { executable, arguments, timeout in
+            try await ProcessRunner.run(
+                executable: executable,
+                arguments: arguments,
+                timeout: timeout
+            )
+        }
+    ) async -> String {
+        if let name = CWWiFiClient.shared().interface()?.interfaceName, !name.isEmpty {
+            return name
+        }
+        return (await availableInterfaces(commandRunner: commandRunner)).first ?? "en0"
     }
 
     /// Check if WiFi is enabled

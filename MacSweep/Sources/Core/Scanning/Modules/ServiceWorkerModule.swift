@@ -106,58 +106,45 @@ struct ServiceWorkerModule: ScanModule {
     }
 
     func clean(items: [CleanupItem], dryRun: Bool) async throws -> CleanupResult {
-        var processed = 0
-        var freed: Int64 = 0
-        var errors: [CleanupError] = []
-        let checker = SafetyChecker()
-
-        for item in items where item.module == id {
-            if dryRun {
-                processed += 1
-                freed += item.size
-            } else {
-                // Defense-in-depth: re-validate every item before deleting,
-                // even though scan() already filtered to safe paths.
-                guard checker.validateForCleanup(item.path, moduleID: id, itemType: item.type).isSafe else {
-                    errors.append(CleanupError(
-                        path: item.path,
-                        message: "Blocked by safety checks"
-                    ))
-                    continue
+        await cleanItems(
+            items,
+            dryRun: dryRun,
+            errorMessage: { error in
+                if let serviceError = error as? ServiceWorkerCleanupError {
+                    return serviceError.errorDescription ?? error.localizedDescription
                 }
-
-                // Check if the app is running
-                let appName = item.moduleName.replacingOccurrences(of: " Service Worker", with: "")
-                if let app = Self.electronApps.first(where: { $0.name == appName }) {
-                    let runningApps = NSWorkspace.shared.runningApplications
-                    if runningApps.contains(where: { $0.bundleIdentifier == app.bundleID }) {
-                        errors.append(CleanupError(
-                            path: item.path,
-                            message: "Please quit \(appName) first"
-                        ))
-                        continue
-                    }
-                }
-
-                do {
-                    let contents = try FileManager.default.contentsOfDirectory(
-                        at: item.path,
-                        includingPropertiesForKeys: nil
-                    )
-                    for content in contents {
-                        try CleanupFileRemover.recoverable(content, module: item.module)
-                    }
-                    processed += 1
-                    freed += item.size
-                } catch {
-                    errors.append(CleanupError(
-                        path: item.path,
-                        message: error.localizedDescription
-                    ))
+                return error.localizedDescription
+            }
+        ) { item, _ in
+            // Refuse while the owning Electron app is running so we don't trash
+            // live Service Worker state mid-session.
+            let appName = item.moduleName.replacingOccurrences(of: " Service Worker", with: "")
+            if let app = Self.electronApps.first(where: { $0.name == appName }) {
+                let running = NSWorkspace.shared.runningApplications
+                    .contains { $0.bundleIdentifier == app.bundleID }
+                if running {
+                    throw ServiceWorkerCleanupError.appRunning(appName)
                 }
             }
-        }
 
-        return CleanupResult(itemsProcessed: processed, bytesFreed: freed, errors: errors)
+            let contents = try FileManager.default.contentsOfDirectory(
+                at: item.path,
+                includingPropertiesForKeys: nil
+            )
+            for content in contents {
+                try CleanupFileRemover.recoverable(content, module: item.module)
+            }
+        }
+    }
+}
+
+enum ServiceWorkerCleanupError: LocalizedError {
+    case appRunning(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .appRunning(let name):
+            return "Please quit \(name) first"
+        }
     }
 }
