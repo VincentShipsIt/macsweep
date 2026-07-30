@@ -49,6 +49,13 @@ struct DockerCleanupActionTests {
                 let output = dockerDFOutputs.isEmpty ? "" : dockerDFOutputs.removeFirst()
                 return ProcessResult(status: 0, output: output, error: "")
             }
+            // Enumerated clean path: list exited containers / dangling volumes.
+            if arguments == ["container", "ls", "-aq", "-f", "status=exited"] {
+                return ProcessResult(status: 0, output: "aabbccddeeff\n", error: "")
+            }
+            if arguments == ["volume", "ls", "-q", "-f", "dangling=true"] {
+                return ProcessResult(status: 0, output: "orphan_volume\n", error: "")
+            }
             return ProcessResult(
                 status: 0,
                 output: "Total reclaimed space: 64MB\n",
@@ -76,13 +83,13 @@ struct DockerCleanupActionTests {
         }) == [
             .pruneBuildCache: "docker builder prune -f",
             .pruneImages: "docker image prune -f",
-            .pruneContainers: "docker container prune -f",
-            .pruneVolumes: "docker volume prune -f"
+            .pruneContainers: "docker container ls -aq -f status=exited && docker container rm <ids>",
+            .pruneVolumes: "docker volume ls -q -f dangling=true && docker volume rm <names>"
         ])
-        #expect(DockerCleanupAction.allCases.allSatisfy {
-            $0.impactDescription.contains("Docker's native prune command")
-        })
-        #expect(DockerCleanupAction.pruneVolumes.impactDescription.contains("permanently removed"))
+        #expect(DockerCleanupAction.pruneBuildCache.impactDescription.localizedCaseInsensitiveContains("ALL unused"))
+        #expect(DockerCleanupAction.pruneImages.impactDescription.localizedCaseInsensitiveContains("dangling"))
+        #expect(DockerCleanupAction.pruneContainers.impactDescription.localizedCaseInsensitiveContains("stopped"))
+        #expect(DockerCleanupAction.pruneVolumes.impactDescription.localizedCaseInsensitiveContains("permanently"))
     }
 
     @Test func scanSurfacesTypedActionsWithCanonicalLabelsAndReclaimableBytes() async throws {
@@ -103,9 +110,9 @@ struct DockerCleanupActionTests {
         #expect(actions.allSatisfy { $0.path.scheme == "macsweep-action" })
         #expect(actions.allSatisfy { $0.module == "docker" && $0.moduleName == $0.displayName })
         #expect(Dictionary(uniqueKeysWithValues: actions.map { ($0.displayName, $0.size) }) == [
-            "Docker Build Cache": 256_000_000,
-            "Docker Images": 1_500_000_000,
-            "Docker Volumes": 32_000_000,
+            "All unused Docker build cache": 256_000_000,
+            "All dangling Docker images": 1_500_000_000,
+            "All unused Docker volumes": 32_000_000,
         ])
 
         let preview = try await engine.clean(items: actions, dryRun: true)
@@ -127,17 +134,17 @@ struct DockerCleanupActionTests {
         let invocations = await recorder.recordedInvocations()
 
         #expect(result.itemsProcessed == DockerCleanupAction.allCases.count)
+        // Each action has size 1; prune output is clamped to that declaration,
+        // and list-then-rm credits the same declaration on success.
         #expect(result.bytesFreed == Int64(DockerCleanupAction.allCases.count))
-        #expect(invocations.map(\.executable) == Array(
-            repeating: "/test/bin/docker",
-            count: DockerCleanupAction.allCases.count + 1
-        ))
         #expect(invocations.map(\.arguments) == [
             ["system", "df", "--format", "{{json .}}"],
             ["builder", "prune", "-f"],
             ["image", "prune", "-f"],
-            ["volume", "prune", "-f"],
-            ["container", "prune", "-f"],
+            ["volume", "ls", "-q", "-f", "dangling=true"],
+            ["volume", "rm", "orphan_volume"],
+            ["container", "ls", "-aq", "-f", "status=exited"],
+            ["container", "rm", "aabbccddeeff"],
         ])
     }
 

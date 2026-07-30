@@ -47,6 +47,9 @@ final class AppState: ObservableObject {
     let scanEngine = ScanEngine()
     let safetyChecker = SafetyChecker()
     let assistant = AssistantCoordinator()
+    /// One process sampler shared by Dashboard, Optimization, and menu-bar detail
+    /// panels so concurrent surfaces don't each spawn a 5s `ps` loop.
+    let processMonitor = ProcessMonitor()
     private let cleanupPerformanceStore = CleanupPerformanceStore.shared
     private var activeScanTask: Task<Void, Never>?
     private var activeScanID: UUID?

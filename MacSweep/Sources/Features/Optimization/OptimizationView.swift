@@ -4,7 +4,7 @@ import AppKit
 /// Optimization view with process list and memory management
 struct OptimizationView: View {
     @EnvironmentObject private var appState: AppState
-    @StateObject private var processMonitor = ProcessMonitor()
+    // Uses AppState.processMonitor — single shared sampler app-wide.
     @StateObject private var systemMonitor = SystemMonitor()
     @State private var selectedProcesses: Set<pid_t> = []
     @State private var showingQuitConfirmation = false
@@ -43,12 +43,14 @@ struct OptimizationView: View {
             }
         }
         .task {
-            await processMonitor.startMonitoring()
+            await appState.processMonitor.startMonitoring()
         }
         .onDisappear {
-            processMonitor.stopMonitoring()
+            appState.processMonitor.stopMonitoring()
         }
     }
+
+    private var processMonitor: ProcessMonitor { appState.processMonitor }
 
     // MARK: - System Stats Row
 

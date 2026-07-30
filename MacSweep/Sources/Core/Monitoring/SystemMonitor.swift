@@ -215,22 +215,13 @@ final class SystemMonitor: ObservableObject {
 
     // MARK: - Memory Management
 
-    /// Free up memory by purging inactive memory
-    func freeUpMemory() async throws {
-        let purgePath = "/usr/sbin/purge"
-        guard FileManager.default.fileExists(atPath: purgePath) else {
-            // purge not available - refresh anyway
-            memoryUsage = await fetchMemoryUsage()
-            return
-        }
-
-        // runCommand hops to a background queue and waits there, so purge (which
-        // can take several seconds walking inactive pages) does not block the
-        // MainActor and freeze the UI / progress spinner.
-        _ = await runCommand(purgePath, arguments: [])
-
-        // Refresh after purge
+    /// Free inactive RAM via the shared maintenance path (admin prompt + bounds).
+    /// Callers must surface failures — do not swallow with `try?`.
+    @discardableResult
+    func freeUpMemory() async throws -> MaintenanceResult {
+        let result = try await MaintenanceActions.freeUpRAM()
         memoryUsage = await fetchMemoryUsage()
+        return result
     }
 }
 

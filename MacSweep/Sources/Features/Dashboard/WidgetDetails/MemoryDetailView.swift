@@ -8,6 +8,7 @@ struct MemoryDetailView: View {
     @ObservedObject var processMonitor: ProcessMonitor
     @State private var isFreeing = false
     @State private var pulseAnimation = false
+    @State private var freeRAMError: String?
 
     private var alertLevel: MetricAlertLevel {
         MetricThresholds.memory(usagePercent: monitor.memoryUsage.usedPercentage)
@@ -33,6 +34,12 @@ struct MemoryDetailView: View {
 
             // Free up RAM button
             freeUpButton
+
+            if let freeRAMError {
+                MacSweepErrorBanner(message: freeRAMError) {
+                    self.freeRAMError = nil
+                }
+            }
         }
         .padding()
         .task {
@@ -170,8 +177,13 @@ struct MemoryDetailView: View {
         Button {
             Task {
                 isFreeing = true
-                defer { isFreeing = false }   // reset even if cancelled / thrown
-                try? await monitor.freeUpMemory()
+                defer { isFreeing = false }
+                freeRAMError = nil
+                do {
+                    _ = try await monitor.freeUpMemory()
+                } catch {
+                    freeRAMError = error.localizedDescription
+                }
             }
         } label: {
             if isFreeing {

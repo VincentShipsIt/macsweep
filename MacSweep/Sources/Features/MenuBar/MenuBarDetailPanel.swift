@@ -157,10 +157,6 @@ struct MenuBarDetailContent: View {
     @ObservedObject var monitor: SystemMonitor
     let appState: AppState
     var onOpenFull: (Feature) -> Void
-    /// One process monitor shared by the CPU and Memory detail views this panel
-    /// hosts, so they don't each start a separate 5s `ps` loop (issue #103).
-    @StateObject private var processMonitor = ProcessMonitor()
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -198,11 +194,11 @@ struct MenuBarDetailContent: View {
         case .storage:
             StorageDetailView(monitor: monitor).environmentObject(appState)
         case .memory:
-            MemoryDetailView(monitor: monitor, processMonitor: processMonitor)
+            MemoryDetailView(monitor: monitor, processMonitor: appState.processMonitor)
         case .battery:
             BatteryDetailView(monitor: monitor)
         case .cpu:
-            CPUDetailView(monitor: monitor, processMonitor: processMonitor)
+            CPUDetailView(monitor: monitor, processMonitor: appState.processMonitor)
         case .network:
             NetworkDetailView(monitor: monitor)
         case .devices:

@@ -273,19 +273,23 @@ public struct HeadlessLoginItem: Codable, Sendable {
     public let kind: HeadlessLoginItemKind
     public let bundleIdentifier: String?
     public let enabled: Bool
+    /// Exact on-disk plist path for launch agents/daemons; nil for SMAppService.
+    public let plistPath: String?
 
     public init(
         name: String,
         path: String,
         kind: HeadlessLoginItemKind,
         bundleIdentifier: String?,
-        enabled: Bool
+        enabled: Bool,
+        plistPath: String? = nil
     ) {
         self.name = name
         self.path = path
         self.kind = kind
         self.bundleIdentifier = bundleIdentifier
         self.enabled = enabled
+        self.plistPath = plistPath
     }
 }
 

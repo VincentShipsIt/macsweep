@@ -323,7 +323,11 @@ struct DockerModule: ScanModule {
         let candidatesByAction = Dictionary(uniqueKeysWithValues: uniqueCandidates.map { ($0.action, $0.item) })
         for action in Self.safeExecutionOrder {
             guard let item = candidatesByAction[action] else { continue }
-            let result = await runDockerCommand(action, executable: executable)
+            let result = await runDockerCommand(
+                action,
+                executable: executable,
+                declaredBytes: item.size
+            )
             if result.success {
                 processed += 1
                 // Subprocess output is untrusted and can race the verified
@@ -345,13 +349,23 @@ struct DockerModule: ScanModule {
 
     private func runDockerCommand(
         _ action: DockerCleanupAction,
-        executable: String
+        executable: String,
+        declaredBytes: Int64
     ) async -> (success: Bool, bytesFreed: Int64, error: String?) {
+        // Containers / volumes: enumerate concrete Docker IDs/names, validate
+        // them, then remove by id. Build cache / dangling images still use the
+        // fixed native prune argv (no stable per-layer list).
+        if let listArgs = action.listArguments {
+            return await runEnumeratedDockerRemoval(
+                action: action,
+                listArguments: listArgs,
+                executable: executable,
+                declaredBytes: declaredBytes
+            )
+        }
+
         do {
             let result = try await commandRunner(executable, action.arguments)
-
-            // Parse reclaimed space from output
-            // Format: "Total reclaimed space: 1.234GB"
             let bytes = Self.parseReclaimedBytes(result.output)
             let error = result.didSucceed
                 ? nil
@@ -360,6 +374,79 @@ struct DockerModule: ScanModule {
         } catch {
             return (false, 0, error.localizedDescription)
         }
+    }
+
+    private func runEnumeratedDockerRemoval(
+        action: DockerCleanupAction,
+        listArguments: [String],
+        executable: String,
+        declaredBytes: Int64
+    ) async -> (success: Bool, bytesFreed: Int64, error: String?) {
+        do {
+            let listResult = try await commandRunner(executable, listArguments)
+            guard listResult.didSucceed else {
+                let message = listResult.error.isEmpty
+                    ? "Docker list command failed"
+                    : listResult.error
+                return (false, 0, message)
+            }
+
+            let ids = Self.sanitizedDockerIDs(from: listResult.output, for: action)
+            guard !ids.isEmpty else {
+                // Nothing to remove — treat as successful zero-byte reclaim.
+                return (true, 0, nil)
+            }
+            guard let removeArgs = action.removeArguments(forIDs: ids) else {
+                return (false, 0, "Unsupported Docker removal action")
+            }
+
+            let removeResult = try await commandRunner(executable, removeArgs)
+            if removeResult.didSucceed {
+                // List-then-rm does not print "Total reclaimed space"; credit
+                // the verified scan-time declaration (caller also min-bounds).
+                return (true, declaredBytes, nil)
+            }
+            let message = removeResult.error.isEmpty
+                ? "Docker remove command failed"
+                : removeResult.error
+            return (false, 0, message)
+        } catch {
+            return (false, 0, error.localizedDescription)
+        }
+    }
+
+    /// Accept only Docker-shaped container hashes or volume names so argv never
+    /// carries path-like or shell-metacharacter content from untrusted streams.
+    static func sanitizedDockerIDs(from output: String, for action: DockerCleanupAction) -> [String] {
+        let tokens = output
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        switch action {
+        case .pruneContainers:
+            // 12–64 hex chars (short or full container id)
+            return tokens.filter(isDockerContainerID)
+        case .pruneVolumes:
+            // Docker volume names: alnum start, then alnum/dash/underscore/dot
+            return tokens.filter(isDockerVolumeName)
+        case .pruneBuildCache, .pruneImages:
+            return []
+        }
+    }
+
+    static func isDockerContainerID(_ token: String) -> Bool {
+        guard (12...64).contains(token.count) else { return false }
+        return token.unicodeScalars.allSatisfy { CharacterSet(charactersIn: "0123456789abcdefABCDEF").contains($0) }
+    }
+
+    static func isDockerVolumeName(_ token: String) -> Bool {
+        guard (1...128).contains(token.count),
+              let first = token.unicodeScalars.first,
+              CharacterSet.alphanumerics.contains(first)
+        else { return false }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_.-"))
+        return token.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
 
     private static func parseReclaimedBytes(_ output: String) -> Int64 {
